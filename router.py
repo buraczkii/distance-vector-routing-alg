@@ -26,6 +26,7 @@ class Router:
     self._forwarding_table_snapshot = []
     # Config file has router_id, neighbors, and link cost to reach them.
     self._config_filename = config_filename
+    self._config_file_hash = b''
     self._router_id = None
     # Socket used to send/recv update messages (using UDP).
     self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -39,6 +40,8 @@ class Router:
     self._neighbors_dv = {}
     # Boolean value for the router to keep listening for messages, set to false for shutdown
     self._listening = True
+    # Holds all known nodes in the network
+    self._vertices = set()
 
 
   def start(self):
@@ -70,17 +73,19 @@ class Router:
     router_id = self.load_config()
     self._socket.bind(('localhost', _ToPort(router_id)))
     self._router_id = router_id
+    self._config_file_hash = util.get_md5_hash(self._config_filename)
 
     # create table entry tuples from the link costs & reset the forwarding table
     table_entries = [(id, id, cost) for id,cost in self._link_costs.items()]
     self._forwarding_table.reset(table_entries)
-    util.log("Initialized the forwarding table:\n"+ self._forwarding_table.__str__())
+    util.log("TABLE INITIALIZED:\n"+ self._forwarding_table.__str__())
     self._forwarding_table_snapshot = self._forwarding_table.snapshot()
     self._distance_vector = self._link_costs
     # keep a copy of router's immediate neighbors
     neighbors = list(self._link_costs)
     neighbors.remove(self._router_id)
     self._neighbors = neighbors
+    self._vertices.update(list(self._link_costs.keys()))
     self.send_distance_vector_to_neighbors()
     return
 
@@ -96,8 +101,9 @@ class Router:
         msg, addr = self._socket.recvfrom(_MAX_UPDATE_MSG_SIZE)
         neighbor_id = _ToRouterId(addr[1])
         dv = util.extract_data(msg)
-        util.log("RECEIVED: router#" + str(neighbor_id) + "'s dv: " + str(dv))
         if not (dv == self._neighbors_dv.get(neighbor_id, None)):
+          util.log("MSG RECEIVED: router#" + str(neighbor_id) + "'s updated dv: \t" + str(dv) + "\n")
+          self._vertices.update(list(dv.keys()))
           self._neighbors_dv[neighbor_id] = dv
           self.recalculate_forwarding_table()
 
@@ -124,12 +130,17 @@ class Router:
     Function for the periodic closure thread. It will read the config, recalculate the forwarding
     table and send out the updated distance vector to its neighbors.
     """
-    self.load_config()
-    self.recalculate_forwarding_table()
-    new_snapshot = self._forwarding_table.snapshot()
-    if not new_snapshot == self._forwarding_table_snapshot:
-      util.log("TABLE UPDATED (due to change in config file):\n" + self._forwarding_table.__str__())
-      self._forwarding_table_snapshot = new_snapshot
+    current_file_hash = util.get_md5_hash(self._config_filename)
+    if not current_file_hash == self._config_file_hash:
+      util.log("Detected change in config file.")
+      self.load_config()
+      self._config_file_hash = current_file_hash
+      self.recalculate_forwarding_table()
+      new_snapshot = self._forwarding_table.snapshot()
+      if not new_snapshot == self._forwarding_table_snapshot:
+        util.log(
+          "TABLE UPDATED (due to change in config file):\n" + self._forwarding_table.__str__())
+        self._forwarding_table_snapshot = new_snapshot
     self.send_distance_vector_to_neighbors()
 
 
@@ -164,18 +175,13 @@ class Router:
     Recalculates the forwarding table based on the router's current link costs and the copies of
     distance vectors it has from its neighbors.
     """
-    # TODO: is there a better way to get all vertices? Can I do something clever with my neighbors?
-    vertices = set(self._distance_vector.keys()) # grab all the nodes in the network
-    for id,dv in self._neighbors_dv.items():
-      vertices.update(dv.keys())
-
-    new_distance_vector = dict.fromkeys(vertices, INF) # default cost is infinity
-    next_hop = dict.fromkeys(vertices, None) # default next_hop is None
+    new_distance_vector = dict.fromkeys(self._vertices, INF) # default cost is infinity
+    next_hop = dict.fromkeys(self._vertices, None) # default next_hop is None
 
     new_distance_vector.update(self._link_costs)
     next_hop.update({id:id for id,cost in self._link_costs.items()})
 
-    for v in vertices:
+    for v in self._vertices:
       for neighbor_id, dv in self._neighbors_dv.items():
         new_cost = new_distance_vector[neighbor_id] + dv.get(v, INF)
         if new_cost < new_distance_vector[v]:

@@ -1,6 +1,8 @@
+from datetime import datetime
+import hashlib
 import struct
 import threading
-import time
+
 
 # Convenient class to run a function periodically in a separate
 # thread.
@@ -53,8 +55,18 @@ def extract_data(msg):
 
 
 def now():
-  return time.strftime("[%a %m-%d-%y %H:%M:%S] ")
+  return datetime.now().strftime("[%a %m-%d-%y %H:%M:%S.%f] ")
 
 
 def log(msg):
   print(now() + msg)
+
+
+def get_md5_hash(file_name):
+  md5 = hashlib.md5()
+  with open(file_name, 'r') as f:
+    while True:
+      block = f.read(1024)
+      if not block: break
+      md5.update(str.encode(block))
+  return md5.digest()
