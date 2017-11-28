@@ -80,15 +80,16 @@ class Router:
 
     table_entries = [(id, id, cost) for id,cost in self._link_costs.items()]
     self._forwarding_table.reset(table_entries)
-    util.log("TABLE INITIALIZED:\n"+ self._forwarding_table.__str__())
+    util.log("Router #" + str(self._router_id) + " TABLE INITIALIZED:\n"+ self._forwarding_table.__str__())
     self._forwarding_table_snapshot = self._forwarding_table.snapshot()
     self._distance_vector = self._link_costs
 
     neighbors = list(self._link_costs)
     neighbors.remove(self._router_id)
     self._neighbors = neighbors
+    #util.log("Router #" + str(self._router_id) + "'s neighbors are: " + str(self._neighbors) + "\n")
     self._vertices.update(list(self._link_costs.keys()))
-    #self.send_distance_vector_to_neighbors()
+    self.send_distance_vector_to_neighbors()
 
 
   def listen_to_neighbors(self):
@@ -102,8 +103,10 @@ class Router:
         msg, addr = self._socket.recvfrom(_MAX_UPDATE_MSG_SIZE)
         neighbor_id = _ToRouterId(addr[1])
         dv = util.extract_data(msg)
+        #util.log("MSG RECEIVED: router #" + str(neighbor_id) + "'s distance vector.")
         if not (dv == self._neighbors_dv.get(neighbor_id, None)):
-          util.log("MSG RECEIVED: router#" + str(neighbor_id) + "'s updated dv: \t" + str(dv) + "\n")
+          util.log("MSG RECEIVED: router #" + str(neighbor_id) + "'s updated dv: \t"
+                   + str(dv) + "\n")
           self._vertices.update(list(dv.keys()))
           self._neighbors_dv[neighbor_id] = dv
           self.recalculate_forwarding_table()
@@ -168,6 +171,7 @@ class Router:
     """
     Sends a copy of this router's current distance vector to all of it's neighbors.
     """
+    #util.log("Sending out copies of distance vector to neighbors.")
     msg_pkt = util.make_update_msg_pkt(self._distance_vector)
     for neighbor in self._neighbors:
       self._socket.sendto(msg_pkt, ('localhost', _ToPort(neighbor)))
@@ -194,3 +198,4 @@ class Router:
     table_tuples = [((id, next_hop[id], cost)) for id,cost in new_distance_vector.items()]
     self._forwarding_table.reset(table_tuples)
     self._distance_vector = new_distance_vector
+    #util.log("Forwarding table recalculated.")
