@@ -1,5 +1,6 @@
 import struct
 import threading
+import time
 
 # Convenient class to run a function periodically in a separate
 # thread.
@@ -32,20 +33,16 @@ def make_update_msg_pkt(distance_vector):
   msg_bytelist.append(struct.pack('!H', entry_count))
 
   for id, cost in distance_vector.items():
-    msg_bytelist.append(struct.pack('!H', id))  # The router ID
-    msg_bytelist.append(struct.pack('!H', cost))  # The corresponding cost
-  # print("msg byte list: " + str(msg_bytelist)) # TODO
+    msg_bytelist.append(struct.pack('!H', id))
+    msg_bytelist.append(struct.pack('!H', cost))
   return b''.join(msg_bytelist)
 
 
 def extract_data(msg):
   """
-  Given a msg conforming to the following format: [# entries (n)][id 1][cost 1]...[id n][cost n],
-  return a dictionary containing each entry where the key is the id and the value is the
-  corresponding cost.
+  Given an update message, return a map of entries mapping the router id to its cost.
   """
   num_entries = struct.unpack("!H", msg[0:2])[0]
-
   distance_vector = {}
   index = 2
   for i in range(num_entries):
@@ -53,3 +50,11 @@ def extract_data(msg):
     distance_vector[entry[0]] = entry[1]
     index += 4
   return distance_vector
+
+
+def now():
+  return time.strftime("[%a %m-%d-%y %H:%M:%S] ")
+
+
+def log(msg):
+  print(now() + msg)
