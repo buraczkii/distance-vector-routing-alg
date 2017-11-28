@@ -63,6 +63,9 @@ def log(msg):
 
 
 def get_md5_hash(file_name):
+  """
+  Returns the md5 hash of the file specified by the given file name.
+  """
   md5 = hashlib.md5()
   with open(file_name, 'r') as f:
     while True:

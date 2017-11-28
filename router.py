@@ -26,14 +26,16 @@ class Router:
     self._forwarding_table_snapshot = []
     # Config file has router_id, neighbors, and link cost to reach them.
     self._config_filename = config_filename
+    # The md5 hash value of the most recently read version of the config file
     self._config_file_hash = b''
+    # The router's id
     self._router_id = None
     # Socket used to send/recv update messages (using UDP).
     self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Holds a list of my neighbor's id #s
     self._neighbors = []
     # Holds the values read in from the config file
-    self._link_costs = []
+    self._link_costs = {}
     # Holds the distance vector {(id:cost)*} for all nodes in the network the router is aware of
     self._distance_vector = {}
     # Holds the distance vectors {(id:distance_vector)*} of the routers immediate neighbors
@@ -46,12 +48,12 @@ class Router:
 
   def start(self):
     """
-    Starts the router. Initializes the forwarding table and starts 2 threads. One to periodically
-    read the config file and send the router's distance vectors to its neighbors. The second to
-    listen for update messages from neighbors and update the forwarding table as necessary.
+    Starts the router. Initializes router details and starts 2 threads. One to periodically read
+    the config file and send the router's distance vectors to its neighbors. The second to listen
+    for update messages from neighbors and update the forwarding table as necessary.
     """
     self._config_updater = util.PeriodicClosure(
-        self.periodic_read_config, _CONFIG_UPDATE_INTERVAL_SEC) # TODO: add random increment? to avoid sync
+        self.periodic_read_config, _CONFIG_UPDATE_INTERVAL_SEC)
     listener_thread = threading.Thread(target=self.listen_to_neighbors, daemon=True)
 
     self._init_router()
@@ -68,26 +70,25 @@ class Router:
   def _init_router(self):
     """
     Reads the router's config file and initializes the router. Binds the socket to its port number.
-    Initializes the router's id, forwarding table, initial distance vector, and list of neighbors.
-    """
+    Initializes the router's id, config file hash, forwarding table, initial distance vector, list
+    of neighbors, and list of vertices (nodes in the network).
+     """
     router_id = self.load_config()
     self._socket.bind(('localhost', _ToPort(router_id)))
     self._router_id = router_id
     self._config_file_hash = util.get_md5_hash(self._config_filename)
 
-    # create table entry tuples from the link costs & reset the forwarding table
     table_entries = [(id, id, cost) for id,cost in self._link_costs.items()]
     self._forwarding_table.reset(table_entries)
     util.log("TABLE INITIALIZED:\n"+ self._forwarding_table.__str__())
     self._forwarding_table_snapshot = self._forwarding_table.snapshot()
     self._distance_vector = self._link_costs
-    # keep a copy of router's immediate neighbors
+
     neighbors = list(self._link_costs)
     neighbors.remove(self._router_id)
     self._neighbors = neighbors
     self._vertices.update(list(self._link_costs.keys()))
-    self.send_distance_vector_to_neighbors()
-    return
+    #self.send_distance_vector_to_neighbors()
 
 
   def listen_to_neighbors(self):
@@ -120,6 +121,9 @@ class Router:
 
 
   def stop(self):
+    """
+    Stop the periodic updater thread and send a message to the listener thread to stop listening.
+    """
     self._listening = False
     if self._config_updater:
       self._config_updater.stop()
@@ -127,19 +131,18 @@ class Router:
 
   def periodic_read_config(self):
     """
-    Function for the periodic closure thread. It will read the config, recalculate the forwarding
-    table and send out the updated distance vector to its neighbors.
+    Method for the periodic updater thread. If a change is detected in the config file, recalculates
+    the forwarding table. Sends out the current copy of the distance vector to all neighbors.
     """
     current_file_hash = util.get_md5_hash(self._config_filename)
     if not current_file_hash == self._config_file_hash:
-      util.log("Detected change in config file.")
+      util.log("Change detected in config file.")
       self.load_config()
       self._config_file_hash = current_file_hash
       self.recalculate_forwarding_table()
       new_snapshot = self._forwarding_table.snapshot()
       if not new_snapshot == self._forwarding_table_snapshot:
-        util.log(
-          "TABLE UPDATED (due to change in config file):\n" + self._forwarding_table.__str__())
+        util.log("TABLE UPDATED (config file change):\n" + self._forwarding_table.__str__())
         self._forwarding_table_snapshot = new_snapshot
     self.send_distance_vector_to_neighbors()
 
@@ -163,7 +166,7 @@ class Router:
 
   def send_distance_vector_to_neighbors(self):
     """
-    Sends a copy of this router's distance vector to all of it's neighbors.
+    Sends a copy of this router's current distance vector to all of it's neighbors.
     """
     msg_pkt = util.make_update_msg_pkt(self._distance_vector)
     for neighbor in self._neighbors:
@@ -188,7 +191,6 @@ class Router:
           new_distance_vector[v] = new_cost
           next_hop[v] = neighbor_id
 
-    # create tuples for the forwarding table using the new distance vector and next hop info
     table_tuples = [((id, next_hop[id], cost)) for id,cost in new_distance_vector.items()]
     self._forwarding_table.reset(table_tuples)
     self._distance_vector = new_distance_vector
